@@ -3,21 +3,25 @@
 
 import os
 import fcntl
-from flask import Flask, request, render_template_string, redirect, current_app
+from flask import Flask, request, make_response, render_template_string, redirect, current_app
 import json
 import collections
 import urllib
+import secrets
+import string
 app = Flask(__name__)
 app.debug = True
 
 import subprocess
 
-def run_command(*args, **kargs):
-    result = subprocess.run(*args, stdout=subprocess.PIPE, **kargs)
+def run_command(*args, verbose=True, **kwargs):
+    if verbose:
+        print("RUN", args, kwargs)
+    result = subprocess.run(*args, stdout=subprocess.PIPE, **kwargs)
     return result.stdout.decode('utf-8')
 
 about_links = []
-about_template = """
+header_template = """
 <div>
 {% for link in links %}
     <span><a href='{{link}}'>{{link}}</a></span>
@@ -26,8 +30,21 @@ about_template = """
 {{body|safe}}
 """
 
+about_message = """
+GET  /about         show usage
+GET  /list          show all list
+GET  /add           show add form
+POST /add {path}    new jupyter instance at path
+GET  /kill          show kill form
+POST /kill {pid}    kill the instance of pid
+GET  /notebooks/<port>  redirect to /p/<id>/init/<port>
+GET  /p/<id>/signup     Set-Cookie and redirect
+
+PROXY /p/<id>/*     forward using jupyter_port cookie
+"""
+
 def render_template_string_with_header(*args, **kwargs):
-    return render_template_string(about_template, links=about_links, body=render_template_string(*args, **kwargs))
+    return render_template_string(header_template, links=about_links, body=render_template_string(*args, **kwargs))
 
 @app.route('/about')
 def about_hello():
@@ -40,7 +57,7 @@ def about_hello():
 notebook_keys = ['base_url', 'hostname', 'notebook_dir', 'password', 'pid', 'port', 'secure', 'token', 'url']
 
 def list_notebooks():
-    return [json.loads(x) for x in run_command(['jupyter', 'notebook', 'list', '--json']).splitlines()]
+    return [json.loads(x) for x in run_command(['jupyter', 'notebook', 'list', '--json'], verbose=False).splitlines()]
 
 list_template = """
 {% if message %}
@@ -48,12 +65,14 @@ list_template = """
 {% endif %}
 <table>
     <thead>
+        <th>open</th>
         {% for key in keys %}<th>{{key}}</th>{% endfor %}
         <th>kill</th>
     </thead>
     <tbody>
     {% for notebook in notebooks %}
         <tr>
+            <td><a href='/notebooks/{{notebook.port}}'>@</a></td>
             {% for value in notebook._values %}<td>{{value}}</td>{% endfor %}
             <td>
                 <form action='/kill' method='post' style='margin-bottom: 0'>
@@ -97,7 +116,6 @@ kill_template = """
 @app.route('/kill', methods=('get', 'post'))
 def api_kill():
     pid = request.form.get('pid')
-    print(pid)
     if not pid:
         return render_template_string_with_header(kill_template)
     notebooks = list_notebooks()
@@ -106,6 +124,8 @@ def api_kill():
     for notebook in notebooks:
         if pid == notebook['pid']:
             result = run_command(['kill', '%d'%pid])
+            if result == "":
+                result = "successfully"
             break
 
     if request.values.get('t') == 'json':
@@ -144,16 +164,41 @@ def api_add():
         message = orig_path and "%s is not a valid path" % orig_path
         return render_template_string_with_header(add_template, message = message, path = orig_path)
     result = "failed"
-    proc = subprocess.Popen(['jupyter', 'lab', '--no-browser'], cwd=path, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    prefix = ''.join([secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6)])
+    add_args = ['jupyter', 'lab', '--no-browser', '--LabApp.base_url=/p/%s'%prefix]
+    print("RUN", add_args)
+    proc = subprocess.Popen(add_args, cwd=path, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         proc.wait(0.5)
         result = "failed"
     except subprocess.TimeoutExpired:
-        result = "success"
+        result = "successfully"
     if request.values.get('t') == 'json':
         out, err = non_block_read(proc.stdout), non_block_read(proc.stderr)
         return json.dumps({'result': result, 'pid': proc.pid, 'returncode': proc.returncode, 'args': proc.args, 'stdout': out, 'stderr': err})
     return redirect_to_list('add {path} %s'%result)
+
+@app.route('/notebooks/<int:port>')
+def api_notebook(port):
+    notebooks = list_notebooks()
+    for notebook in notebooks:
+        if port == notebook['port']:
+            base_url = notebook['base_url']
+            if not base_url.startswith('/'):
+                base_url = '/' + base_url
+            return redirect('%s'%base_url+"signup")
+    return redirect_to_list('open %d failed, notebook for the pid not found'%port)
+
+@app.route('/p/<notebook_id>/signup')
+def api_signup(notebook_id):
+    notebooks = list_notebooks()
+    base_url = '/p/%s/' % notebook_id
+    for notebook in notebooks:
+        if base_url == notebook['base_url']:
+            response = make_response(redirect('%s?'%base_url+urllib.parse.urlencode({'token': notebook['token']})))
+            response.set_cookie('jupyter_port', "%d"%notebook['port'], path=base_url)
+            return response
+    return redirect_to_list('signup %d failed, notebook for the pid not found'%port)
 
 def has_no_empty_params(rule):
     defaults = rule.defaults if rule.defaults is not None else ()
