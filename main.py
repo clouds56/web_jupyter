@@ -2,7 +2,7 @@
 # FLASK_APP=main.py FLASK_DEBUG=1 flask run
 
 import os
-from flask import Flask, request, render_template_string, redirect
+from flask import Flask, request, render_template_string, redirect, current_app
 import json
 import collections
 import urllib
@@ -15,10 +15,22 @@ def run_command(*args, **kargs):
     result = subprocess.run(*args, stdout=subprocess.PIPE, **kargs)
     return result.stdout.decode('utf-8')
 
+about_links = []
+about_template = """
+<div>
+{% for link in links %}
+    <span><a href='{{link|e}}'>{{link|e}}</a></span>
+{% endfor %}
+</div>
+{{body|safe}}
+"""
+
+def render_template_string_with_header(*args, **kwargs):
+    return render_template_string(about_template, links=about_links, body=render_template_string(*args, **kwargs))
 
 @app.route('/about')
 def about_hello():
-    return 'Hello, world'
+    return render_template_string(about_template, links=about_links, body='<div>Hello, World</div>')
 
 
 notebook_keys = ['base_url', 'hostname', 'notebook_dir', 'password', 'pid', 'port', 'secure', 'token', 'url']
@@ -59,11 +71,14 @@ def api_list():
         return json.dumps(list_notebooks())
     message = request.args.get('m')
     if message:
-        message = message.format(**request.form.to_dict())
-    return render_template_string(list_template,
-                                  message = message,
-                                  keys = notebook_keys,
-                                  notebooks = [{'_values':[x[k] for k in notebook_keys], **x} for x in notebooks])
+        try:
+            message = message.format(**request.form.to_dict())
+        except:
+            message = 'build message "%s" failed' % message
+    return render_template_string_with_header(list_template,
+                message = message,
+                keys = notebook_keys,
+                notebooks = [{'_values':[x[k] for k in notebook_keys], **x} for x in notebooks])
 
 def redirect_to_list(message):
     return redirect('/list?' + urllib.parse.urlencode({'m': message}), code=307)
@@ -110,7 +125,7 @@ def api_add():
         path = os.path.join(os.path.expanduser('~'), path)
     if not path or not os.path.exists(path):
         message = orig_path and "%s is not a valid path" % orig_path
-        return render_template_string(add_template, message = message, path = orig_path)
+        return render_template_string_with_header(add_template, message = message, path = orig_path)
     result = "failed"
     proc = subprocess.Popen(['jupyter', 'lab', '--no-browser'], cwd=path)
     try:
@@ -119,3 +134,12 @@ def api_add():
     except subprocess.TimeoutExpired:
         result = "success"
     return redirect_to_list('add {path} %s'%result)
+
+def has_no_empty_params(rule):
+    defaults = rule.defaults if rule.defaults is not None else ()
+    arguments = rule.arguments if rule.arguments is not None else ()
+    return len(defaults) >= len(arguments)
+
+with app.app_context():
+    adapter = current_app.url_map.bind('')
+    about_links = [adapter.build(rule.endpoint, **(rule.defaults or {})) for rule in current_app.url_map.iter_rules() if "GET" in rule.methods and has_no_empty_params(rule)]
