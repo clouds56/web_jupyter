@@ -2,3 +2,5 @@
 !/nginx/.keep
 __pycache__/
 *.secret_key
+*.salt
+*.users

@@ -5,6 +5,8 @@ import os
 import fcntl
 from flask import Flask, request, make_response, render_template_string, redirect, current_app
 from flask_wtf.csrf import CSRFProtect, CSRFError
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required
+import hmac
 import json
 import collections
 import urllib
@@ -13,6 +15,7 @@ import string
 
 app = Flask(__name__)
 csrf = CSRFProtect(app)
+login_manager = LoginManager(app)
 app.debug = True
 
 import subprocess
@@ -39,15 +42,50 @@ def install_secret_key(filename='secret_key'):
     return secret_key
 app.config['SECRET_KEY'] = install_secret_key("%s.secret_key"%__name__)
 
-def run_command(*args, verbose=True, **kwargs):
-    if verbose:
-        print("RUN", args, kwargs)
-    result = subprocess.run(*args, stdout=subprocess.PIPE, **kwargs)
-    return result.stdout.decode('utf-8')
+class User(UserMixin):
+    salt = install_secret_key("%s.salt"%__name__)
+    users = {}
+    def __init__(self, t):
+        self.id = t['id']
+        self.data = t
+    def valid(self, password):
+        message = password.encode() + self.salt
+        h = hmac.new(message, digestmod='sha1')
+        h.update(message)
+        digest = h.hexdigest()
+        if not hmac.compare_digest(self.data['password'], digest):
+            print("Digest: ", digest)
+            return False
+        return True;
+    # h = hmac.new(app.config['SECRET_KEY'], digestmod='sha256')
+    # h.update(salt)
+    # @classmethod
+    # def valid_token(cls, message, token):
+    #     h = cls.h.clone()
+    #     h.update(message.decode())
+    #     return hmac.compare_digest(token, h.hexdigest())
+
+def load_users(filename='users'):
+    users = {}
+    with open(filename, 'r') as f:
+        for line in f:
+            user = User(json.loads(line))
+            users[user.id] = user
+    return users
+User.users = load_users("%s.users"%__name__)
+
+@login_manager.user_loader
+def load_user(id):
+    return User.users.get(id)
 
 about_links = []
 header_template = """
 <div>
+{% if not current_user.is_authenticated %}
+    <span><a href='/login?next={{current_url}}'>/login</a></span>
+{% else %}
+    <span>{{current_user.data.id}} <a href='/logout'>/logout</a></span>
+{% endif %}
 {% for link in links %}
     <span><a href='{{link}}'>{{link}}</a></span>
 {% endfor %}
@@ -75,12 +113,66 @@ def render_template_string_with_header(*args, **kwargs):
 def handle_csrf_error(e):
     return render_template_string_with_header('<div>CSRF Error: {{reason}}</div>', reason=e.description), 400
 
+@app.errorhandler(401)
+def unauthorized_error(e):
+    return render_template_string_with_header('<div>Unauthorized: {{reason}}</div>', reason=e.description), 401
+
+login_template = """
+{% if message %}
+<div>{{ message }}</div>
+{% endif %}
+{% if not current_user.is_authenticated %}
+<form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+    <input type='text' name='username'>
+    <input type='password' name='password'>
+    <input type='submit' value='login'>
+</form>
+{% else %}
+<div>
+    Hello, {{ current_user.data.id }}
+    <a href='/logout'>logout</a>
+</div>
+{% endif %}
+"""
+
+@app.route("/login", methods=("get", "post"))
+def login():
+    message = None
+    if request.method.upper() == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        user = User.users.get(username)
+        if not user:
+            message = "username not exist"
+        elif user.valid(password):
+            login_user(user)
+            next = request.args.get("next")
+            if not next:
+                next = '/list'
+            return redirect(next)
+        else:
+            message = "wrong password"
+    return render_template_string_with_header(login_template, message=message)
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect('/login')
+
 @app.route('/about')
+@login_required
 def about_hello():
     if request.values.get('t') == 'json':
         return json.dumps({'text': about_message, 'api': about_links, 'options': request.query_string.decode()})
     return render_template_string_with_header("<div>{% for m in message.strip().splitlines() %}{{m}}<br>{% endfor %}</div>", message=about_message)
 
+def run_command(*args, verbose=True, **kwargs):
+    if verbose:
+        print("RUN", args, kwargs)
+    result = subprocess.run(*args, stdout=subprocess.PIPE, **kwargs)
+    return result.stdout.decode('utf-8')
 
 notebook_keys = ['base_url', 'hostname', 'notebook_dir', 'password', 'pid', 'port', 'secure', 'token', 'url']
 
@@ -117,6 +209,7 @@ list_template = """
 """
 
 @app.route('/list', methods=('get', 'post'))
+@login_required
 def api_list():
     notebooks = list_notebooks()
     if request.values.get('t') == 'json':
@@ -144,6 +237,7 @@ kill_template = """
 """
 
 @app.route('/kill', methods=('get', 'post'))
+@login_required
 def api_kill():
     pid = request.form.get('pid')
     if not pid:
@@ -186,6 +280,7 @@ def non_block_read(output):
         return ""
 
 @app.route('/add', methods=('get', 'post'))
+@login_required
 def api_add():
     path = request.form.get('path')
     orig_path = path
@@ -210,6 +305,7 @@ def api_add():
     return redirect_to_list('add {path} %s'%result)
 
 @app.route('/notebooks/<int:port>')
+@login_required
 def api_notebook(port):
     notebooks = list_notebooks()
     for notebook in notebooks:
@@ -221,6 +317,7 @@ def api_notebook(port):
     return redirect_to_list('open %d failed, notebook for the pid not found'%port)
 
 @app.route('/p/<notebook_id>/signup')
+@login_required
 def api_signup(notebook_id):
     notebooks = list_notebooks()
     base_url = '/p/%s/' % notebook_id
@@ -239,3 +336,4 @@ def has_no_empty_params(rule):
 with app.app_context():
     adapter = current_app.url_map.bind('')
     about_links = [adapter.build(rule.endpoint, **(rule.defaults or {})) for rule in current_app.url_map.iter_rules() if "GET" in rule.methods and has_no_empty_params(rule)]
+    about_links = [link for link in about_links if link != '/login' and link != '/logout']
