@@ -2,6 +2,7 @@
 # FLASK_APP=main.py FLASK_DEBUG=1 flask run
 
 import os
+import fcntl
 from flask import Flask, request, render_template_string, redirect, current_app
 import json
 import collections
@@ -19,7 +20,7 @@ about_links = []
 about_template = """
 <div>
 {% for link in links %}
-    <span><a href='{{link|e}}'>{{link|e}}</a></span>
+    <span><a href='{{link}}'>{{link}}</a></span>
 {% endfor %}
 </div>
 {{body|safe}}
@@ -30,7 +31,10 @@ def render_template_string_with_header(*args, **kwargs):
 
 @app.route('/about')
 def about_hello():
-    return render_template_string(about_template, links=about_links, body='<div>Hello, World</div>')
+    message = "Hello, World"
+    if request.values.get('t') == 'json':
+        return json.dumps({'text': message, 'api': about_links, 'options': request.query_string.decode()})
+    return render_template_string_with_header("<div>{{message}}</div>", message=message)
 
 
 notebook_keys = ['base_url', 'hostname', 'notebook_dir', 'password', 'pid', 'port', 'secure', 'token', 'url']
@@ -40,20 +44,20 @@ def list_notebooks():
 
 list_template = """
 {% if message %}
-<div>{{ message|e }}</div>
+<div>{{ message }}</div>
 {% endif %}
 <table>
     <thead>
-        {% for key in keys %}<th>{{key|e}}</th>{% endfor %}
+        {% for key in keys %}<th>{{key}}</th>{% endfor %}
         <th>kill</th>
     </thead>
     <tbody>
     {% for notebook in notebooks %}
         <tr>
-            {% for value in notebook._values %}<td>{{value|e}}</td>{% endfor %}
+            {% for value in notebook._values %}<td>{{value}}</td>{% endfor %}
             <td>
-                <form action='/kill' method='post'>
-                    <input name='pid' type='text' value='{{notebook.pid|e}}' hidden>
+                <form action='/kill' method='post' style='margin-bottom: 0'>
+                    <input name='pid' type='text' value='{{notebook.pid}}' hidden>
                     <input type='submit' value='X'>
                 </form>
             </td>
@@ -67,7 +71,7 @@ list_template = """
 @app.route('/list', methods=('get', 'post'))
 def api_list():
     notebooks = list_notebooks()
-    if request.args.get('t') == 'json':
+    if request.values.get('t') == 'json':
         return json.dumps(list_notebooks())
     message = request.args.get('m')
     if message:
@@ -84,7 +88,7 @@ def redirect_to_list(message):
     return redirect('/list?' + urllib.parse.urlencode({'m': message}), code=307)
 
 kill_template = """
-<form action='/kill' method='post'>
+<form method='post'>
     <input name='pid' type='text'>
     <input type='submit' value='kill'>
 </form>
@@ -95,27 +99,40 @@ def api_kill():
     pid = request.form.get('pid')
     print(pid)
     if not pid:
-        return kill_template
+        return render_template_string_with_header(kill_template)
     notebooks = list_notebooks()
     pid = int(pid)
-    result = "failed"
+    result = "failed, notebook for the pid not found"
     for notebook in notebooks:
         if pid == notebook['pid']:
             result = run_command(['kill', '%d'%pid])
             break
+
+    if request.values.get('t') == 'json':
+        return json.dumps({'result': result})
     return redirect_to_list('kill {pid} %s'%result)
 
 add_template = """
 {% if message %}
-<div>{{ message|e }}</div>
+<div>{{ message }}</div>
 {% endif %}
-<form action='/add' method='post'>
+<form method='post'>
     <input name='path' type='text' placeholder='path' autofocus
-    {% if path %}value="{{path|e}}"{% endif %}
+    {% if path %}value="{{path}}"{% endif %}
     >
     <input type='submit' value='add'>
 </form>
 """
+
+def non_block_read(output):
+    # Note: only works in linux
+    fd = output.fileno()
+    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+    try:
+        return output.read().decode('utf-8')
+    except:
+        return ""
 
 @app.route('/add', methods=('get', 'post'))
 def api_add():
@@ -127,12 +144,15 @@ def api_add():
         message = orig_path and "%s is not a valid path" % orig_path
         return render_template_string_with_header(add_template, message = message, path = orig_path)
     result = "failed"
-    proc = subprocess.Popen(['jupyter', 'lab', '--no-browser'], cwd=path)
+    proc = subprocess.Popen(['jupyter', 'lab', '--no-browser'], cwd=path, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         proc.wait(0.5)
         result = "failed"
     except subprocess.TimeoutExpired:
         result = "success"
+    if request.values.get('t') == 'json':
+        out, err = non_block_read(proc.stdout), non_block_read(proc.stderr)
+        return json.dumps({'result': result, 'pid': proc.pid, 'returncode': proc.returncode, 'args': proc.args, 'stdout': out, 'stderr': err})
     return redirect_to_list('add {path} %s'%result)
 
 def has_no_empty_params(rule):
