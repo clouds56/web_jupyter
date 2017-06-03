@@ -1,1 +1,3 @@
+/nginx/*
+!/nginx/.keep
 __pycache__/
