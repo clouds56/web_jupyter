@@ -1,6 +1,7 @@
  #!/usr/bin/python3
 # FLASK_APP=main.py FLASK_DEBUG=1 flask run
 
+import os
 from flask import Flask, request, render_template_string, redirect
 import json
 import collections
@@ -26,19 +27,21 @@ def list_notebooks():
     return [json.loads(x) for x in run_command(['jupyter', 'notebook', 'list', '--json']).splitlines()]
 
 list_template = """
-<div>{{ message }}</div>
+{% if message %}
+<div>{{ message|e }}</div>
+{% endif %}
 <table>
     <thead>
-        {% for key in keys %}<th>{{key}}</th>{% endfor %}
+        {% for key in keys %}<th>{{key|e}}</th>{% endfor %}
         <th>kill</th>
     </thead>
     <tbody>
     {% for notebook in notebooks %}
         <tr>
-            {% for value in notebook._values %}<td>{{value}}</td>{% endfor %}
+            {% for value in notebook._values %}<td>{{value|e}}</td>{% endfor %}
             <td>
                 <form action='/kill' method='post'>
-                    <input name='pid' type='text' value='{{notebook.pid}}' hidden>
+                    <input name='pid' type='text' value='{{notebook.pid|e}}' hidden>
                     <input type='submit' value='X'>
                 </form>
             </td>
@@ -78,12 +81,23 @@ def api_kill():
     print(pid)
     if not pid:
         return kill_template
+    notebooks = list_notebooks()
+    pid = int(pid)
     result = "failed"
+    for notebook in notebooks:
+        if pid == notebook['pid']:
+            result = run_command(['kill', '%d'%pid])
+            break
     return redirect_to_list('kill {pid} %s'%result)
 
 add_template = """
+{% if message %}
+<div>{{ message|e }}</div>
+{% endif %}
 <form action='/add' method='post'>
-    <input name='path' type='text' placeholder='path'>
+    <input name='path' type='text' placeholder='path' autofocus
+    {% if path %}value="{{path|e}}"{% endif %}
+    >
     <input type='submit' value='add'>
 </form>
 """
@@ -91,7 +105,17 @@ add_template = """
 @app.route('/add', methods=('get', 'post'))
 def api_add():
     path = request.form.get('path')
-    if not path:
-        return add_template
+    orig_path = path
+    if path and not os.path.isabs(path):
+        path = os.path.join(os.path.expanduser('~'), path)
+    if not path or not os.path.exists(path):
+        message = orig_path and "%s is not a valid path" % orig_path
+        return render_template_string(add_template, message = message, path = orig_path)
     result = "failed"
+    proc = subprocess.Popen(['jupyter', 'lab', '--no-browser'], cwd=path)
+    try:
+        proc.wait(0.5)
+        result = "failed"
+    except subprocess.TimeoutExpired:
+        result = "success"
     return redirect_to_list('add {path} %s'%result)
