@@ -4,15 +4,40 @@
 import os
 import fcntl
 from flask import Flask, request, make_response, render_template_string, redirect, current_app
+from flask_wtf.csrf import CSRFProtect, CSRFError
 import json
 import collections
 import urllib
 import secrets
 import string
+
 app = Flask(__name__)
+csrf = CSRFProtect(app)
 app.debug = True
 
 import subprocess
+
+def random_string(n, characters=string.ascii_letters + string.digits):
+    return ''.join([secrets.choice(characters) for _ in range(n)])
+
+def install_secret_key(filename='secret_key'):
+    #filename = os.path.join(app.instance_path, filename)
+    try:
+        secret_key = open(filename, 'rb').read()
+    except IOError:
+        secret_key = None
+    if secret_key:
+        return secret_key
+    print('create secret file')
+    secret_key_string = random_string(24)
+    with open(filename, 'wb') as secret_file:
+        secret_file.write(secret_key_string.encode())
+    secret_key = open(filename, 'rb').read()
+    if not secret_key:
+        print('still cannot read %s'%filename)
+        sys.exit(1)
+    return secret_key
+app.config['SECRET_KEY'] = install_secret_key("%s.secret_key"%__name__)
 
 def run_command(*args, verbose=True, **kwargs):
     if verbose:
@@ -46,12 +71,15 @@ PROXY /p/<id>/*     forward using jupyter_port cookie
 def render_template_string_with_header(*args, **kwargs):
     return render_template_string(header_template, links=about_links, body=render_template_string(*args, **kwargs))
 
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    return render_template_string_with_header('<div>CSRF Error: {{reason}}</div>', reason=e.description), 400
+
 @app.route('/about')
 def about_hello():
-    message = "Hello, World"
     if request.values.get('t') == 'json':
-        return json.dumps({'text': message, 'api': about_links, 'options': request.query_string.decode()})
-    return render_template_string_with_header("<div>{{message}}</div>", message=message)
+        return json.dumps({'text': about_message, 'api': about_links, 'options': request.query_string.decode()})
+    return render_template_string_with_header("<div>{% for m in message.strip().splitlines() %}{{m}}<br>{% endfor %}</div>", message=about_message)
 
 
 notebook_keys = ['base_url', 'hostname', 'notebook_dir', 'password', 'pid', 'port', 'secure', 'token', 'url']
@@ -76,6 +104,7 @@ list_template = """
             {% for value in notebook._values %}<td>{{value}}</td>{% endfor %}
             <td>
                 <form action='/kill' method='post' style='margin-bottom: 0'>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                     <input name='pid' type='text' value='{{notebook.pid}}' hidden>
                     <input type='submit' value='X'>
                 </form>
@@ -108,6 +137,7 @@ def redirect_to_list(message):
 
 kill_template = """
 <form method='post'>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <input name='pid' type='text'>
     <input type='submit' value='kill'>
 </form>
@@ -137,6 +167,7 @@ add_template = """
 <div>{{ message }}</div>
 {% endif %}
 <form method='post'>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
     <input name='path' type='text' placeholder='path' autofocus
     {% if path %}value="{{path}}"{% endif %}
     >
@@ -164,7 +195,7 @@ def api_add():
         message = orig_path and "%s is not a valid path" % orig_path
         return render_template_string_with_header(add_template, message = message, path = orig_path)
     result = "failed"
-    prefix = ''.join([secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6)])
+    prefix = random_string(6, string.ascii_lowercase + string.digits)
     add_args = ['jupyter', 'lab', '--no-browser', '--LabApp.base_url=/p/%s'%prefix]
     print("RUN", add_args)
     proc = subprocess.Popen(add_args, cwd=path, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
