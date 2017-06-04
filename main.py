@@ -265,6 +265,7 @@ add_template = """
     <input name='path' type='text' placeholder='path' autofocus
     {% if path %}value="{{path}}"{% endif %}
     >
+    <input type='checkbox' id='check_force' name='force'><label for='check_force'>f</label>
     <input type='submit' value='add'>
 </form>
 """
@@ -283,12 +284,16 @@ def non_block_read(output):
 @login_required
 def api_add():
     path = request.form.get('path')
+    force = request.form.get('force')
     orig_path = path
     if path and not os.path.isabs(path):
         path = os.path.join(os.path.expanduser('~'), path)
+    if force and not os.path.exists(path):
+        run_command(['mkdir', path])
     if not path or not os.path.exists(path):
         message = orig_path and "%s is not a valid path" % orig_path
         return render_template_string_with_header(add_template, message = message, path = orig_path)
+
     result = "failed"
     prefix = random_string(6, string.ascii_lowercase + string.digits)
     add_args = ['jupyter', 'lab', '--no-browser', '--LabApp.base_url=/p/%s'%prefix]
