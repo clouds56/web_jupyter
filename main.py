@@ -301,7 +301,7 @@ def api_add():
         result = "successfully"
     if request.values.get('t') == 'json':
         out, err = non_block_read(proc.stdout), non_block_read(proc.stderr)
-        return json.dumps({'result': result, 'pid': proc.pid, 'returncode': proc.returncode, 'args': proc.args, 'stdout': out, 'stderr': err})
+        return json.dumps({'result': result, 'path': path, 'pid': proc.pid, 'returncode': proc.returncode, 'args': proc.args, 'stdout': out, 'stderr': err})
     return redirect_to_list('add {path} %s'%result)
 
 @app.route('/notebooks/<int:port>')
