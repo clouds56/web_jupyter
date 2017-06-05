@@ -54,7 +54,6 @@ class User(UserMixin):
         h.update(message)
         digest = h.hexdigest()
         if not hmac.compare_digest(self.data['password'], digest):
-            print("Digest: ", digest)
             return False
         return True;
     # h = hmac.new(app.config['SECRET_KEY'], digestmod='sha256')
