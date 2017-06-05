@@ -1,0 +1,12 @@
+[Unit]
+Description=Flask jupyter-vnc
+After=network.target
+
+[Service]
+Type=simple
+User=<user>
+ExecStart=/usr/bin/sh snippets/start.sh
+WorkingDirectory=<workdir>
+
+[Install]
+WantedBy=multi-user.target

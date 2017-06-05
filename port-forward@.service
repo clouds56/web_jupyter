@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
+User=<user>
 ExecStart=/usr/bin/zsh /usr/bin/port-forward.sh --port-config /etc/port-forward/%i.config --verbose
 
 [Install]
