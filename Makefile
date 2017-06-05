@@ -14,7 +14,7 @@ snippets/%.service: %.service
 	sed "s|<user>|${USER}|" $< | sed "s|<workdir>|${WORKDIR}|" > $@
 
 install: ${TARGET_FILES}
-	sudo sh snippets/install.sh ${INSTALL}
+	sh snippets/install.sh ${INSTALL}
 
 show:
 	#echo $${USER:-$$(whoami)} $${WORKDIR:-$$(pwd)}
