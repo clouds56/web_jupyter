@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=forking
 User=html
-PIDFile=nginx/nginx.pid
+PIDFile=<workdir>/nginx/nginx.pid
 PrivateDevices=yes
 SyslogLevel=err
 
