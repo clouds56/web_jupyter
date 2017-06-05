@@ -4,3 +4,5 @@ __pycache__/
 *.secret_key
 *.salt
 *.users
+/snippets/*.service
+/snippets/*.config
