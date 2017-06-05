@@ -1,0 +1,10 @@
+[Unit]
+Description=forward port via ssh tunnel
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/zsh /usr/bin/port-forward.sh --port-config /etc/port-forward/%i.config --verbose
+
+[Install]
+WantedBy=multi-user.target
