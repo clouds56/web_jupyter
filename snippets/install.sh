@@ -5,7 +5,6 @@ BIN=/usr/bin
 SERVICE_FILES=(jupyter-vnc.service nginx-jupyter.service)
 PORT_DIR=/etc/port-forward
 PORT_SH=port-forward.sh
-PORT_CONF=(deepbeta.config)
 PORT_SERVICE=port-forward@.service
 
 verbose=0
@@ -88,14 +87,16 @@ if update "$PORT_SERVICE"; then
   update_port=true
 fi
 
-for port_file in ${PORT_CONF[@]}; do
+debug "update_port:" $update_port
+for port_file in "$SRC"/*.config; do
+  port_file_base=$(basename "$port_file")
   should_reload=$update_port
-  if check "$SRC/$port_file" "$PORT_DIR/$port_file"; then
-    info "updating port $DIR/$port_file"
-    would cp "$SRC/$port_file" "$PORT_DIR/"
+  if check "$port_file" "$PORT_DIR/$port_file_base"; then
+    info "updating port $port_file"
+    would cp "$port_file" "$PORT_DIR/"
     should_reload=true
   fi
   if [[ "$should_reload" == "true" ]]; then
-    reload "${PORT_SERVICE%.service}${port_file%.config}"
+    reload "${PORT_SERVICE%.service}${port_file_base%.config}"
   fi
 done

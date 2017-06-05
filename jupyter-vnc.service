@@ -7,6 +7,8 @@ Type=simple
 User=<user>
 ExecStart=/usr/bin/sh snippets/start.sh
 WorkingDirectory=<workdir>
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

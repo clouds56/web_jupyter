@@ -6,6 +6,8 @@ After=network.target
 Type=simple
 User=<user>
 ExecStart=/usr/bin/zsh /usr/bin/port-forward.sh --port-config /etc/port-forward/%i.config --verbose
+Restart=always
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
