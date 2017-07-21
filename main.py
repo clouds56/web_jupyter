@@ -295,7 +295,7 @@ def api_add():
 
     result = "failed"
     prefix = random_string(6, string.ascii_lowercase + string.digits)
-    add_args = ['jupyter', 'lab', '--no-browser', '--LabApp.base_url=/p/%s'%prefix]
+    add_args = ['jupyter', 'lab', '--no-browser', '--LabApp.base_url=/p/%s'%prefix, '--LabApp.static_url=/static/']
     print("RUN", add_args)
     proc = subprocess.Popen(add_args, cwd=path, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:

@@ -6,3 +6,5 @@ __pycache__/
 *.users
 /snippets/*.service
 /snippets/*.config
+/asset/*
+!/asset/.keep
